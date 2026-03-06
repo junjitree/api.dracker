@@ -1,6 +1,6 @@
 use axum::{
     Json, Router,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
@@ -11,7 +11,10 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Result, entity::pings, entity::prelude::Pings, http::params::QueryParams, skippy,
+    Error, Result,
+    entity::{pings, prelude::Pings},
+    http::params::QueryParams,
+    skippy,
     state::AppState,
 };
 
@@ -38,6 +41,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/pings", get(index))
         .route("/pings", post(store))
+        .route("/pings/{id}", get(show))
         .route("/pings/count", get(count))
 }
 
@@ -97,4 +101,14 @@ async fn store(State(state): State<AppState>, Json(params): Json<PingParams>) ->
     .await?;
 
     Ok(Json(ping.id))
+}
+
+async fn show(State(state): State<AppState>, Path(id): Path<u64>) -> Result<Json<Dto>> {
+    let ping = Pings::find_by_id(id)
+        .into_model::<Dto>()
+        .one(&state.db)
+        .await?
+        .ok_or(Error::NotFound)?;
+
+    Ok(Json(ping))
 }
