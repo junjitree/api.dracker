@@ -1,17 +1,18 @@
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{Path, Query, State},
-    routing::{get, post},
+    routing::get,
 };
 use chrono::{DateTime, Utc};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, EntityTrait, FromQueryResult,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+    ColumnTrait, Condition, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, Select,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::{
     Error, Result,
+    auth::AuthClaim,
     entity::{
         pings,
         prelude::{Pings, Trackers},
@@ -34,23 +35,14 @@ struct Dto {
     updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Deserialize)]
-struct PingParams {
-    tracker_id: u64,
-    lat: f64,
-    lon: f64,
-    note: String,
-}
-
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/pings", get(index))
-        .route("/pings", post(store))
         .route("/pings/{id}", get(show))
         .route("/pings/count", get(count))
 }
 
-fn query(params: &QueryParams) -> Select<Pings> {
+fn query(params: &QueryParams, user_id: u64) -> Select<Pings> {
     let q = params.q.clone().unwrap_or_default();
     let query = Pings::find()
         .left_join(Trackers)
@@ -62,7 +54,8 @@ fn query(params: &QueryParams) -> Select<Pings> {
         .column(pings::Column::Lat)
         .column(pings::Column::Lon)
         .column(pings::Column::CreatedAt)
-        .column(pings::Column::UpdatedAt);
+        .column(pings::Column::UpdatedAt)
+        .filter(trackers::Column::UserId.eq(user_id));
 
     if q.is_empty() {
         return query;
@@ -76,6 +69,7 @@ fn query(params: &QueryParams) -> Select<Pings> {
 }
 
 async fn index(
+    Extension(auth): Extension<AuthClaim>,
     State(state): State<AppState>,
     Query(params): Query<QueryParams>,
 ) -> Result<Json<Vec<Dto>>> {
@@ -83,7 +77,7 @@ async fn index(
     let col = skippy::column(params.sort.clone(), pings::Column::UpdatedAt);
     let ord = skippy::order(params.desc, true);
 
-    let pings = query(&params)
+    let pings = query(&params, auth.user_id)
         .offset(skip)
         .limit(take)
         .order_by(col, ord)
@@ -95,31 +89,23 @@ async fn index(
 }
 
 async fn count(
+    Extension(auth): Extension<AuthClaim>,
     State(state): State<AppState>,
     Query(params): Query<QueryParams>,
 ) -> Result<Json<u64>> {
-    let count = query(&params).count(&state.db).await?;
+    let count = query(&params, auth.user_id).count(&state.db).await?;
 
     Ok(Json(count))
 }
 
-async fn store(State(state): State<AppState>, Json(params): Json<PingParams>) -> Result<Json<u64>> {
-    let ping = pings::ActiveModel {
-        tracker_id: Set(params.tracker_id),
-        lat: Set(params.lat),
-        lon: Set(params.lon),
-        note: Set(params.note),
-
-        ..Default::default()
-    }
-    .insert(&state.db)
-    .await?;
-
-    Ok(Json(ping.id))
-}
-
-async fn show(State(state): State<AppState>, Path(id): Path<u64>) -> Result<Json<Dto>> {
+async fn show(
+    Extension(auth): Extension<AuthClaim>,
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+) -> Result<Json<Dto>> {
     let ping = Pings::find_by_id(id)
+        .left_join(Trackers)
+        .filter(trackers::Column::UserId.eq(auth.user_id))
         .into_model::<Dto>()
         .one(&state.db)
         .await?

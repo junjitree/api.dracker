@@ -8,7 +8,7 @@ use crate::{
 use axum::{
     Extension, Json, Router,
     extract::{Path, Query, State},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use chrono::{DateTime, Utc};
 use sea_orm::{
@@ -43,12 +43,13 @@ pub fn routes() -> Router<AppState> {
         .route("/trackers", post(store))
         .route("/trackers/count", get(count))
         .route("/trackers/{id}", get(show))
+        .route("/trackers/{id}", put(update))
         .route("/trackers/{id}", delete(destroy))
 }
 
-fn query(params: &QueryParams) -> Select<Trackers> {
+fn query(params: &QueryParams, user_id: u64) -> Select<Trackers> {
     let q = params.q.clone().unwrap_or_default();
-    let query = Trackers::find();
+    let query = Trackers::find().filter(trackers::Column::UserId.eq(user_id));
 
     if q.is_empty() {
         return query;
@@ -61,8 +62,8 @@ fn query(params: &QueryParams) -> Select<Trackers> {
     )
 }
 
-fn query_one(id: u64) -> Select<Trackers> {
-    Trackers::find_by_id(id)
+fn query_one(id: u64, user_id: u64) -> Select<Trackers> {
+    Trackers::find_by_id(id).filter(trackers::Column::UserId.eq(user_id))
 }
 
 fn query_select(query: Select<Trackers>) -> Select<Trackers> {
@@ -70,6 +71,7 @@ fn query_select(query: Select<Trackers>) -> Select<Trackers> {
 }
 
 async fn index(
+    Extension(auth): Extension<AuthClaim>,
     State(state): State<AppState>,
     Query(params): Query<QueryParams>,
 ) -> Result<Json<Vec<Dto>>> {
@@ -77,7 +79,7 @@ async fn index(
     let col = skippy::column(params.sort.clone(), trackers::Column::UpdatedAt);
     let ord = skippy::order(params.desc, true);
 
-    let mut trackers = query(&params)
+    let mut trackers = query(&params, auth.user_id)
         .offset(skip)
         .limit(take)
         .order_by(col, ord)
@@ -94,10 +96,11 @@ async fn index(
 }
 
 async fn count(
+    Extension(auth): Extension<AuthClaim>,
     State(state): State<AppState>,
     Query(params): Query<QueryParams>,
 ) -> Result<Json<u64>> {
-    let count = query(&params).count(&state.db).await?;
+    let count = query(&params, auth.user_id).count(&state.db).await?;
 
     Ok(Json(count))
 }
@@ -124,8 +127,12 @@ async fn store(
     Ok(Json(tracker.id))
 }
 
-async fn show(State(state): State<AppState>, Path(id): Path<u64>) -> Result<Json<Dto>> {
-    let mut tracker = query_select(query_one(id))
+async fn show(
+    Extension(auth): Extension<AuthClaim>,
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+) -> Result<Json<Dto>> {
+    let mut tracker = query_select(query_one(id, auth.user_id))
         .into_model::<Dto>()
         .one(&state.db)
         .await?
@@ -137,8 +144,39 @@ async fn show(State(state): State<AppState>, Path(id): Path<u64>) -> Result<Json
     Ok(Json(tracker))
 }
 
-async fn destroy(State(state): State<AppState>, Path(id): Path<u64>) -> Result<Response> {
-    let tracker = query_one(id).one(&state.db).await?.ok_or(Error::NotFound)?;
+async fn update(
+    Extension(auth): Extension<AuthClaim>,
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+    Json(params): Json<TrackerParams>,
+) -> Result<Response> {
+    if let Err(err) = params.validate() {
+        return Err(Error::BadRequest(err.to_string()));
+    }
+
+    let tracker = query_select(query_one(id, auth.user_id))
+        .one(&state.db)
+        .await?
+        .ok_or(Error::NotFound)?;
+
+    let mut tracker = tracker.into_active_model();
+
+    tracker.name = Set(params.name);
+    tracker.desc = Set(params.desc);
+    tracker.save(&state.db).await?;
+
+    Ok(Response::Accepted)
+}
+
+async fn destroy(
+    Extension(auth): Extension<AuthClaim>,
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+) -> Result<Response> {
+    let tracker = query_one(id, auth.user_id)
+        .one(&state.db)
+        .await?
+        .ok_or(Error::NotFound)?;
 
     let mut tracker = tracker.into_active_model();
     tracker.updated_at = Set(Utc::now());
