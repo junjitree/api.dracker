@@ -13,7 +13,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, EntityTrait, FromQueryResult,
-    IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+    IntoActiveModel, ModelTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
 };
 use serde::{Deserialize, Serialize};
 use validator::Validate;
@@ -173,14 +173,12 @@ async fn destroy(
     State(state): State<AppState>,
     Path(id): Path<u64>,
 ) -> Result<Response> {
-    let tracker = query_one(id, auth.user_id)
+    query_one(id, auth.user_id)
         .one(&state.db)
         .await?
-        .ok_or(Error::NotFound)?;
+        .ok_or(Error::NotFound)?
+        .delete(&state.db)
+        .await?;
 
-    let mut tracker = tracker.into_active_model();
-    tracker.updated_at = Set(Utc::now());
-    tracker.save(&state.db).await?;
-
-    Ok(Response::Accepted)
+    Ok(Response::NoContent)
 }
