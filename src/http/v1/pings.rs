@@ -12,7 +12,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Error, Result,
-    entity::{pings, prelude::Pings},
+    entity::{
+        pings,
+        prelude::{Pings, Trackers},
+        trackers,
+    },
     http::params::QueryParams,
     skippy,
     state::AppState,
@@ -22,6 +26,7 @@ use crate::{
 struct Dto {
     id: u64,
     tracker_id: u64,
+    tracker: Option<String>,
     lat: f64,
     lon: f64,
     note: String,
@@ -47,7 +52,17 @@ pub fn routes() -> Router<AppState> {
 
 fn query(params: &QueryParams) -> Select<Pings> {
     let q = params.q.clone().unwrap_or_default();
-    let query = Pings::find();
+    let query = Pings::find()
+        .left_join(Trackers)
+        .select_only()
+        .column(pings::Column::Id)
+        .column(pings::Column::TrackerId)
+        .column_as(trackers::Column::Name, "tracker")
+        .column(pings::Column::Note)
+        .column(pings::Column::Lat)
+        .column(pings::Column::Lon)
+        .column(pings::Column::CreatedAt)
+        .column(pings::Column::UpdatedAt);
 
     if q.is_empty() {
         return query;
