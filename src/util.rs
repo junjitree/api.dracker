@@ -22,7 +22,7 @@ fn tracing() {
 }
 
 pub fn sqids() -> Result<Sqids, sqids::Error> {
-    Sqids::builder().min_length(10).build()
+    Sqids::builder().min_length(1).build()
 }
 
 pub fn init() {

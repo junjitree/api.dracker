@@ -125,11 +125,14 @@ async fn store(
 }
 
 async fn show(State(state): State<AppState>, Path(id): Path<u64>) -> Result<Json<Dto>> {
-    let tracker = query_select(query_one(id))
+    let mut tracker = query_select(query_one(id))
         .into_model::<Dto>()
         .one(&state.db)
         .await?
         .ok_or(Error::NotFound)?;
+
+    let sqids = util::sqids()?;
+    tracker.slug = Some(sqids.encode(&[tracker.id])?);
 
     Ok(Json(tracker))
 }
