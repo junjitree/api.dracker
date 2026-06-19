@@ -1,7 +1,10 @@
 use crate::{
     AppState, Error, Response,
     auth::AuthClaim,
-    entity::{prelude::Trackers, trackers},
+    entity::{
+        prelude::{Scans, Trackers},
+        scans, trackers,
+    },
     http::params::QueryParams,
     skippy, util,
 };
@@ -26,8 +29,17 @@ struct Dto {
     slug: Option<String>,
     name: String,
     desc: String,
+    target_url: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, FromQueryResult)]
+struct ScanDto {
+    id: u64,
+    ip: Option<String>,
+    user_agent: Option<String>,
+    created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize, Validate)]
@@ -35,6 +47,20 @@ struct TrackerParams {
     #[validate(length(min = 1))]
     name: String,
     desc: String,
+    #[serde(default)]
+    target_url: Option<String>,
+}
+
+/// Normalize an optional target URL: blank -> None, otherwise validate it parses.
+fn clean_target(raw: Option<String>) -> Result<Option<String>> {
+    match raw {
+        Some(s) if !s.trim().is_empty() => {
+            let s = s.trim().to_string();
+            url::Url::parse(&s)?;
+            Ok(Some(s))
+        }
+        _ => Ok(None),
+    }
 }
 
 pub fn routes() -> Router<AppState> {
@@ -45,6 +71,7 @@ pub fn routes() -> Router<AppState> {
         .route("/trackers/{id}", get(show))
         .route("/trackers/{id}", put(update))
         .route("/trackers/{id}", delete(destroy))
+        .route("/trackers/{id}/scans", get(scans_index))
 }
 
 fn query(params: &QueryParams, user_id: u64) -> Select<Trackers> {
@@ -118,6 +145,7 @@ async fn store(
         user_id: Set(auth.user_id),
         name: Set(params.name),
         desc: Set(params.desc),
+        target_url: Set(clean_target(params.target_url)?),
 
         ..Default::default()
     }
@@ -163,6 +191,7 @@ async fn update(
 
     tracker.name = Set(params.name);
     tracker.desc = Set(params.desc);
+    tracker.target_url = Set(clean_target(params.target_url)?);
     tracker.save(&state.db).await?;
 
     Ok(Response::Accepted)
@@ -181,4 +210,26 @@ async fn destroy(
         .await?;
 
     Ok(Response::NoContent)
+}
+
+async fn scans_index(
+    Extension(auth): Extension<AuthClaim>,
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+) -> Result<Json<Vec<ScanDto>>> {
+    // ensure the tracker belongs to the caller before exposing its scans
+    query_one(id, auth.user_id)
+        .one(&state.db)
+        .await?
+        .ok_or(Error::NotFound)?;
+
+    let scans = Scans::find()
+        .filter(scans::Column::TrackerId.eq(id))
+        .order_by(scans::Column::CreatedAt, sea_orm::Order::Desc)
+        .limit(200)
+        .into_model::<ScanDto>()
+        .all(&state.db)
+        .await?;
+
+    Ok(Json(scans))
 }

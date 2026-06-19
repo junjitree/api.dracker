@@ -11,6 +11,7 @@ pub struct Model {
     pub name: String,
     #[sea_orm(column_type = "Text")]
     pub desc: String,
+    pub target_url: Option<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }
@@ -19,6 +20,8 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::pings::Entity")]
     Pings,
+    #[sea_orm(has_many = "super::scans::Entity")]
+    Scans,
     #[sea_orm(
         belongs_to = "super::users::Entity",
         from = "Column::UserId",
@@ -32,6 +35,12 @@ pub enum Relation {
 impl Related<super::pings::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Pings.def()
+    }
+}
+
+impl Related<super::scans::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Scans.def()
     }
 }
 
