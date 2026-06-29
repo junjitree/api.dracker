@@ -2,7 +2,8 @@ use crate::{
     AppState, Error, Response,
     auth::AuthClaim,
     entity::{
-        prelude::{Scans, Trackers},
+        pings,
+        prelude::{Pings, Scans, Trackers},
         scans, trackers,
     },
     http::params::QueryParams,
@@ -42,6 +43,15 @@ struct ScanDto {
     created_at: DateTime<Utc>,
 }
 
+#[derive(Serialize, FromQueryResult)]
+struct PingDto {
+    id: u64,
+    note: String,
+    lat: f64,
+    lon: f64,
+    created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Deserialize, Validate)]
 struct TrackerParams {
     #[validate(length(min = 1))]
@@ -72,6 +82,7 @@ pub fn routes() -> Router<AppState> {
         .route("/trackers/{id}", put(update))
         .route("/trackers/{id}", delete(destroy))
         .route("/trackers/{id}/scans", get(scans_index))
+        .route("/trackers/{id}/pings", get(pings_index))
 }
 
 fn query(params: &QueryParams, user_id: u64) -> Select<Trackers> {
@@ -232,4 +243,26 @@ async fn scans_index(
         .await?;
 
     Ok(Json(scans))
+}
+
+async fn pings_index(
+    Extension(auth): Extension<AuthClaim>,
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+) -> Result<Json<Vec<PingDto>>> {
+    // ensure the tracker belongs to the caller before exposing its pings
+    query_one(id, auth.user_id)
+        .one(&state.db)
+        .await?
+        .ok_or(Error::NotFound)?;
+
+    let pings = Pings::find()
+        .filter(pings::Column::TrackerId.eq(id))
+        .order_by(pings::Column::CreatedAt, sea_orm::Order::Desc)
+        .limit(200)
+        .into_model::<PingDto>()
+        .all(&state.db)
+        .await?;
+
+    Ok(Json(pings))
 }
