@@ -42,5 +42,5 @@ jobs:
             set -e
             cd /apps/api.dracker
             git pull
-            cargo install --path . --force
+            cargo install --path . --force --locked
             systemctl restart dracker
