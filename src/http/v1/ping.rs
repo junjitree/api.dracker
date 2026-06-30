@@ -1,16 +1,17 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
-    routing::{get, post},
+    routing::{get, post, put},
 };
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
+use chrono::Utc;
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, IntoActiveModel};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     Error, Result,
     entity::{
         pings,
-        prelude::{Trackers, Users},
+        prelude::{Pings, Trackers, Users},
     },
     state::AppState,
     util,
@@ -21,6 +22,11 @@ struct PingParams {
     slug: String,
     lat: f64,
     lon: f64,
+    note: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct NoteParams {
     note: String,
 }
 
@@ -39,6 +45,30 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/ping", post(store))
         .route("/ping/{slug}", get(show))
+        .route("/ping/{id}/note", put(set_note))
+}
+
+/// Attach a finder's note (their phone / a meetup spot) to a just-created ping.
+/// Public and id-addressed, so it only sets the note while it's still empty —
+/// avoiding overwrites of an existing note.
+async fn set_note(
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+    Json(params): Json<NoteParams>,
+) -> Result<Json<u64>> {
+    let ping = Pings::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or(Error::NotFound)?;
+
+    if ping.note.trim().is_empty() {
+        let mut ping = ping.into_active_model();
+        ping.note = Set(params.note.trim().to_string());
+        ping.updated_at = Set(Utc::now());
+        ping.save(&state.db).await?;
+    }
+
+    Ok(Json(id))
 }
 
 async fn show(State(state): State<AppState>, Path(slug): Path<String>) -> Result<Json<PublicDto>> {
