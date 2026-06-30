@@ -57,11 +57,16 @@ async fn resolve(
     .insert(&state.db)
     .await;
 
-    // custom destination if set, else the default public ping page
-    let target = tracker
-        .target_url
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| format!("{}/_{}", state.spa_url, slug));
+    // A lost tag always lands on the public page so the finder sees the
+    // owner's contact info; otherwise honor a custom destination if set.
+    let target = if tracker.is_lost {
+        format!("{}/_{}", state.spa_url, slug)
+    } else {
+        tracker
+            .target_url
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| format!("{}/_{}", state.spa_url, slug))
+    };
 
     Ok(Redirect::temporary(&target))
 }

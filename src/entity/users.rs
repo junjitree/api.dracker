@@ -12,6 +12,9 @@ pub struct Model {
     pub password: String,
     pub given_name: String,
     pub surname: String,
+    pub phone: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub address: Option<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

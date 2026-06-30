@@ -12,6 +12,9 @@ pub struct Model {
     #[sea_orm(column_type = "Text")]
     pub desc: String,
     pub target_url: Option<String>,
+    pub is_lost: bool,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub message: Option<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

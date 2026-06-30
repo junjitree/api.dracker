@@ -23,6 +23,10 @@ pub struct Params {
     pub email: String,
     pub given_name: String,
     pub surname: String,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub address: Option<String>,
 }
 
 #[derive(Serialize, FromQueryResult)]
@@ -31,6 +35,8 @@ pub struct Dto {
     pub email: String,
     pub given_name: String,
     pub surname: String,
+    pub phone: Option<String>,
+    pub address: Option<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }
@@ -52,6 +58,8 @@ async fn me(
         .column(users::Column::Email)
         .column(users::Column::GivenName)
         .column(users::Column::Surname)
+        .column(users::Column::Phone)
+        .column(users::Column::Address)
         .column(users::Column::CreatedAt)
         .column(users::Column::UpdatedAt)
         .into_model::<Dto>()
@@ -87,6 +95,8 @@ async fn update(
     user.email = Set(params.email);
     user.given_name = Set(params.given_name);
     user.surname = Set(params.surname);
+    user.phone = Set(params.phone);
+    user.address = Set(params.address);
     user.updated_at = Set(Utc::now());
     user.save(&state.db).await?;
 

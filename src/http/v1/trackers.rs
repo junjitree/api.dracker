@@ -31,6 +31,8 @@ struct Dto {
     name: String,
     desc: String,
     target_url: Option<String>,
+    is_lost: bool,
+    message: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -59,6 +61,10 @@ struct TrackerParams {
     desc: String,
     #[serde(default)]
     target_url: Option<String>,
+    #[serde(default)]
+    is_lost: bool,
+    #[serde(default)]
+    message: Option<String>,
 }
 
 /// Normalize an optional target URL: blank -> None, otherwise validate it parses.
@@ -71,6 +77,11 @@ fn clean_target(raw: Option<String>) -> Result<Option<String>> {
         }
         _ => Ok(None),
     }
+}
+
+/// Normalize an optional free-text message: trim, blank -> None.
+fn clean_message(raw: Option<String>) -> Option<String> {
+    raw.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
 pub fn routes() -> Router<AppState> {
@@ -157,6 +168,8 @@ async fn store(
         name: Set(params.name),
         desc: Set(params.desc),
         target_url: Set(clean_target(params.target_url)?),
+        is_lost: Set(params.is_lost),
+        message: Set(clean_message(params.message)),
 
         ..Default::default()
     }
@@ -203,6 +216,8 @@ async fn update(
     tracker.name = Set(params.name);
     tracker.desc = Set(params.desc);
     tracker.target_url = Set(clean_target(params.target_url)?);
+    tracker.is_lost = Set(params.is_lost);
+    tracker.message = Set(clean_message(params.message));
     tracker.save(&state.db).await?;
 
     Ok(Response::Accepted)
