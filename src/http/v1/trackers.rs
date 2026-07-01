@@ -17,7 +17,8 @@ use axum::{
 use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, EntityTrait, FromQueryResult,
-    IntoActiveModel, ModelTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+    IntoActiveModel, JoinType, ModelTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, RelationTrait, Select, sea_query::Expr,
 };
 use serde::{Deserialize, Serialize};
 use validator::Validate;
@@ -125,13 +126,17 @@ async fn index(
     Query(params): Query<QueryParams>,
 ) -> Result<Json<Vec<Dto>>> {
     let (skip, take) = skippy::skip(params.skip, params.take);
-    let col = skippy::column(params.sort.clone(), trackers::Column::UpdatedAt);
-    let ord = skippy::order(params.desc, true);
 
+    // Order by most-recently-pinged: left-join pings and sort by each tracker's
+    // latest ping time. Never-pinged tags have a NULL max and sort last (MySQL
+    // puts NULLs last on DESC); updated_at breaks ties within that group.
     let mut trackers = query(&params, auth.user_id)
+        .join(JoinType::LeftJoin, trackers::Relation::Pings.def())
+        .group_by(trackers::Column::Id)
+        .order_by(Expr::cust("MAX(pings.created_at)"), Order::Desc)
+        .order_by(trackers::Column::UpdatedAt, Order::Desc)
         .offset(skip)
         .limit(take)
-        .order_by(col, ord)
         .into_model::<Dto>()
         .all(&state.db)
         .await?;
