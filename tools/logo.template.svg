@@ -1,0 +1,29 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="70%">
+      <stop offset="0%" stop-color="#14121f"/>
+      <stop offset="100%" stop-color="#0a0910"/>
+    </radialGradient>
+    <linearGradient id="stroke" x1="140" y1="120" x2="380" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#8b7bff"/>
+      <stop offset="55%" stop-color="#6a5cff"/>
+      <stop offset="100%" stop-color="#4a3ce0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <g>
+    <!-- tracker tag body -->
+    <circle cx="256" cy="268" r="150" stroke="url(#stroke)" stroke-width="9"/>
+
+    <!-- top tab / attachment ring -->
+    <circle cx="256" cy="118" r="17" fill="#0a0910" stroke="url(#stroke)" stroke-width="9"/>
+
+    <!-- QR code (generated: encodes the payload, standard finders + quiet zone) -->
+    <g fill="url(#stroke)">
+{{QR_MODULES}}
+    </g>
+  </g>
+</svg>

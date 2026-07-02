@@ -33,12 +33,12 @@ fi
 
 mkdir -p data/mysql
 echo "Starting MySQL server..."
-$man run --replace --name $name -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -p 3306:3306 -v ./data/mysql:/var/lib/mysql -d docker.io/library/mysql:8
+$man run --replace --name $name -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -p 3306:3306 -v ./data/mysql:/var/lib/mysql -d docker.io/library/mysql:8.0
 echo "Started MySQL server..."
 echo "Waiting for MySQL server to start..."
 max_retries=30
 retry_count=0
-until $sql -uroot -h127.0.0.1 -e "SELECT 1;" >/dev/null 2>&1; do
+until $man exec "$name" mysqladmin ping -uroot --silent >/dev/null 2>&1; do
     if [ "$retry_count" -ge "$max_retries" ]; then
         echo "Failed to connect to MySQL after $max_retries attempts. Exiting."
         $man container stop "$name"
@@ -49,6 +49,6 @@ until $sql -uroot -h127.0.0.1 -e "SELECT 1;" >/dev/null 2>&1; do
     retry_count=$((retry_count + 1))
 done
 echo "MySQL is up and running!"
-$sql -uroot -h127.0.0.1 -e "create database if not exists dracker"
-$sql -uroot -h127.0.0.1 dracker
+$man exec "$name" mysql -uroot -e "create database if not exists dracker"
+$man exec -it "$name" mysql -uroot dracker
 $man container stop $name
