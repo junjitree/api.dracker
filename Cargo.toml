@@ -17,6 +17,7 @@ cookie = "0.18"
 dotenv = "0.15"
 hex = "0.4"
 jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
+migration = { path = "migration" }
 lettre = { version = "0.11", features = [
   "builder",
   "rustls-tls",
@@ -32,9 +33,9 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqids = "0.4.2"
 tokio = { version = "1.47", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors"] }
+tower-http = { version = "0.6", features = ["compression-full", "cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2.5"
-uuid = { version = "1.18", features = ["v4"] }
+uuid = { version = "1.18", features = ["serde", "v4"] }
 validator = { version = "0.20", features = ["derive"] }

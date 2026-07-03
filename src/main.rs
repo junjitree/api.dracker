@@ -9,11 +9,13 @@ use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::Tls;
 use lettre::transport::smtp::client::TlsParameters;
+use migration::{Migrator, MigratorTrait};
 use sea_orm::Database;
 use std::env;
 use std::fs;
 use std::net::SocketAddr;
 use std::time::Duration;
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
@@ -57,6 +59,12 @@ async fn main() -> Result<()> {
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let db = Database::connect(db_url).await?;
 
+    // The deploy script only rebuilds + restarts; schema changes ship by
+    // running any pending migrations here on boot.
+    Migrator::up(&db, None)
+        .await
+        .expect("Could not run database migrations");
+
     let spa_url = env::var("SPA_URL").expect("SPA_URL must be set");
     let origin = spa_url.clone();
 
@@ -90,12 +98,14 @@ async fn main() -> Result<()> {
         spa_url,
     };
 
+    let mut origins = vec![origin.parse().unwrap()];
+    if cfg!(debug_assertions) {
+        // INFO: This is for local development
+        origins.push("http://localhost:42069".parse().unwrap());
+    }
+
     let cors = CorsLayer::new()
-        .allow_origin([
-            origin.parse().unwrap(),
-            // INFO: This is for local development
-            "http://localhost:42069".parse().unwrap(),
-        ])
+        .allow_origin(origins)
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
         .allow_headers([
             header::AUTHORIZATION,
@@ -111,7 +121,8 @@ async fn main() -> Result<()> {
         .merge(http::root::routes())
         .merge(http::v1::routes(&state))
         .with_state(state)
-        .layer(cors);
+        .layer(cors)
+        .layer(CompressionLayer::new());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], app_port));
     let listener = tokio::net::TcpListener::bind(addr).await?;

@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
 };
 use axum_extra::extract::cookie::CookieJar;
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use jsonwebtoken::{Algorithm, Validation, decode};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter,
@@ -47,9 +47,13 @@ pub async fn auth(
         .await?
         .ok_or(Error::Unauthorized)?;
 
-    let mut user_token = user_token.into_active_model();
-    user_token.updated_at = Set(Utc::now());
-    user_token.save(&state.db).await?;
+    // "Last used" only needs minute resolution — skip the write (one per
+    // authenticated request otherwise) while the timestamp is fresh.
+    if Utc::now() - user_token.updated_at > Duration::seconds(60) {
+        let mut user_token = user_token.into_active_model();
+        user_token.updated_at = Set(Utc::now());
+        user_token.save(&state.db).await?;
+    }
 
     request.extensions_mut().insert(token_data.claims);
 
@@ -62,12 +66,12 @@ pub async fn auth(
         .get(X_CSRF_TOKEN)
         .and_then(|header| header.to_str().ok())
         .map(String::from)
-        .unwrap_or_default();
+        .ok_or(Error::Forbidden)?;
 
     let csrf_cookie = CookieJar::from_headers(request.headers())
         .get(X_CSRF_TOKEN)
         .map(|cookie| cookie.value().to_string())
-        .unwrap_or_default();
+        .ok_or(Error::Forbidden)?;
 
     if csrf_header != csrf_cookie {
         return Err(Error::Forbidden);

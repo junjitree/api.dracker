@@ -116,10 +116,6 @@ fn query_one(id: u64, user_id: u64) -> Select<Trackers> {
     Trackers::find_by_id(id).filter(trackers::Column::UserId.eq(user_id))
 }
 
-fn query_select(query: Select<Trackers>) -> Select<Trackers> {
-    query
-}
-
 async fn index(
     Extension(auth): Extension<AuthClaim>,
     State(state): State<AppState>,
@@ -189,7 +185,7 @@ async fn show(
     State(state): State<AppState>,
     Path(id): Path<u64>,
 ) -> Result<Json<Dto>> {
-    let mut tracker = query_select(query_one(id, auth.user_id))
+    let mut tracker = query_one(id, auth.user_id)
         .into_model::<Dto>()
         .one(&state.db)
         .await?
@@ -211,7 +207,7 @@ async fn update(
         return Err(Error::BadRequest(err.to_string()));
     }
 
-    let tracker = query_select(query_one(id, auth.user_id))
+    let tracker = query_one(id, auth.user_id)
         .one(&state.db)
         .await?
         .ok_or(Error::NotFound)?;

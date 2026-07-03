@@ -4,8 +4,12 @@ use axum::{
     routing::{get, post, put},
 };
 use chrono::Utc;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait, IntoActiveModel};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter,
+};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+use validator::Validate;
 
 use crate::{
     Error, Result,
@@ -17,16 +21,20 @@ use crate::{
     util,
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 struct PingParams {
     slug: String,
+    #[validate(range(min = -90.0, max = 90.0))]
     lat: f64,
+    #[validate(range(min = -180.0, max = 180.0))]
     lon: f64,
+    #[validate(length(max = 255))]
     note: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 struct NoteParams {
+    #[validate(length(min = 1, max = 255))]
     note: String,
 }
 
@@ -45,18 +53,24 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/ping", post(store))
         .route("/ping/{slug}", get(show))
-        .route("/ping/{id}/note", put(set_note))
+        .route("/ping/{uuid}/note", put(set_note))
 }
 
 /// Attach a finder's note (their phone / a meetup spot) to a just-created ping.
-/// Public and id-addressed, so it only sets the note while it's still empty —
-/// avoiding overwrites of an existing note.
+/// Public, so it's addressed by the ping's random uuid — handed out only in the
+/// response to the ping that created it — rather than the guessable sequential
+/// id. It also only sets the note while it's still empty, avoiding overwrites.
 async fn set_note(
     State(state): State<AppState>,
-    Path(id): Path<u64>,
+    Path(uuid): Path<Uuid>,
     Json(params): Json<NoteParams>,
-) -> Result<Json<u64>> {
-    let ping = Pings::find_by_id(id)
+) -> Result<Json<Uuid>> {
+    if let Err(err) = params.validate() {
+        return Err(Error::BadRequest(err.to_string()));
+    }
+
+    let ping = Pings::find()
+        .filter(pings::Column::Uuid.eq(uuid))
         .one(&state.db)
         .await?
         .ok_or(Error::NotFound)?;
@@ -68,7 +82,7 @@ async fn set_note(
         ping.save(&state.db).await?;
     }
 
-    Ok(Json(id))
+    Ok(Json(uuid))
 }
 
 async fn show(State(state): State<AppState>, Path(slug): Path<String>) -> Result<Json<PublicDto>> {
@@ -104,24 +118,40 @@ async fn show(State(state): State<AppState>, Path(slug): Path<String>) -> Result
     }))
 }
 
-async fn store(State(state): State<AppState>, Json(params): Json<PingParams>) -> Result<Json<u64>> {
-    let sqids = util::sqids()?;
-    let tracker_id = sqids.decode(&params.slug);
-    if tracker_id.is_empty() {
-        return Err(Error::BadRequest("Invalid tracker_id".into()));
+/// Record a finder's location ping. Returns the ping's uuid — the only handle
+/// that can attach a follow-up note (see `set_note`).
+async fn store(
+    State(state): State<AppState>,
+    Json(params): Json<PingParams>,
+) -> Result<Json<Uuid>> {
+    if let Err(err) = params.validate() {
+        return Err(Error::BadRequest(err.to_string()));
     }
 
-    let tracker_id = tracker_id[0];
-    let ping = pings::ActiveModel {
+    let sqids = util::sqids()?;
+    let tracker_id = *sqids
+        .decode(&params.slug)
+        .first()
+        .ok_or(Error::BadRequest("Invalid slug".into()))?;
+
+    // 404 unknown/revoked slugs instead of tripping the FK into a 500
+    Trackers::find_by_id(tracker_id)
+        .one(&state.db)
+        .await?
+        .ok_or(Error::NotFound)?;
+
+    let uuid = Uuid::new_v4();
+    pings::ActiveModel {
         tracker_id: Set(tracker_id),
         lat: Set(params.lat),
         lon: Set(params.lon),
         note: Set(params.note),
+        uuid: Set(Some(uuid.as_bytes().to_vec())),
 
         ..Default::default()
     }
     .insert(&state.db)
     .await?;
 
-    Ok(Json(ping.id))
+    Ok(Json(uuid))
 }

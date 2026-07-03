@@ -13,6 +13,8 @@ pub struct Model {
     #[sea_orm(column_type = "Double")]
     pub lon: f64,
     pub note: String,
+    #[sea_orm(column_type = "Binary(16)", nullable)]
+    pub uuid: Option<Vec<u8>>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

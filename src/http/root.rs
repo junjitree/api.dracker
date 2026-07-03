@@ -48,14 +48,17 @@ async fn resolve(
         .get(USER_AGENT)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.chars().take(512).collect::<String>());
-    let _ = scans::ActiveModel {
-        tracker_id: Set(id),
-        ip: Set(ip),
-        user_agent: Set(user_agent),
-        ..Default::default()
-    }
-    .insert(&state.db)
-    .await;
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        let _ = scans::ActiveModel {
+            tracker_id: Set(id),
+            ip: Set(ip),
+            user_agent: Set(user_agent),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await;
+    });
 
     // A lost tag always lands on the public page so the finder sees the
     // owner's contact info; otherwise honor a custom destination if set.

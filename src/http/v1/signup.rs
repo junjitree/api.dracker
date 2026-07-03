@@ -76,7 +76,8 @@ async fn store(State(state): State<AppState>, Json(params): Json<Params>) -> Res
         let mut query = link.query_pairs_mut();
         query.append_pair("token", &token);
     }
-    tokio::spawn(async move {
+    // SmtpTransport::send is blocking — keep it off the async workers
+    tokio::task::spawn_blocking(move || {
         let _ = send_welcome(&state.mail, &user, link.as_str());
     });
 

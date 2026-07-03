@@ -60,7 +60,7 @@ async fn set(State(state): State<AppState>, Json(params): Json<ResetParams>) -> 
         .ok_or(Error::InvalidCredentials)?
         .into_active_model();
 
-    user.password = Set(hash_password(&params.password).unwrap());
+    user.password = Set(hash_password(&params.password)?);
     user.save(&state.db).await?;
 
     Ok(Response::Accepted)
@@ -110,7 +110,8 @@ async fn forgot(
         let mut query = link.query_pairs_mut();
         query.append_pair("token", &token);
     }
-    tokio::spawn(async move {
+    // SmtpTransport::send is blocking — keep it off the async workers
+    tokio::task::spawn_blocking(move || {
         let _ = send_reset(&state.mail, &user, link.as_str());
     });
 
