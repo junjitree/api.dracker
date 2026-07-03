@@ -61,21 +61,58 @@ pub async fn auth(
         return Ok(next.run(request).await);
     }
 
+    let jar = CookieJar::from_headers(request.headers());
     let csrf_header = request
         .headers()
         .get(X_CSRF_TOKEN)
-        .and_then(|header| header.to_str().ok())
-        .map(String::from)
-        .ok_or(Error::Forbidden)?;
+        .and_then(|header| header.to_str().ok());
+    let csrf_cookie = jar.get(X_CSRF_TOKEN).map(|cookie| cookie.value());
 
-    let csrf_cookie = CookieJar::from_headers(request.headers())
-        .get(X_CSRF_TOKEN)
-        .map(|cookie| cookie.value().to_string())
-        .ok_or(Error::Forbidden)?;
-
-    if csrf_header != csrf_cookie {
+    if !csrf_matches(csrf_header, csrf_cookie) {
         return Err(Error::Forbidden);
     }
 
     Ok(next.run(request).await)
+}
+
+/// Double-submit CSRF check for mutating requests: the token must be present
+/// and equal in *both* the header and the cookie. A missing (or empty) side
+/// fails — treating both-absent as a match ("" == "") would defeat the check.
+fn csrf_matches(header: Option<&str>, cookie: Option<&str>) -> bool {
+    matches!((header, cookie), (Some(h), Some(c)) if !h.is_empty() && h == c)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::csrf_matches;
+
+    #[test]
+    fn both_missing_is_rejected() {
+        assert!(!csrf_matches(None, None));
+    }
+
+    #[test]
+    fn header_missing_is_rejected() {
+        assert!(!csrf_matches(None, Some("tok")));
+    }
+
+    #[test]
+    fn cookie_missing_is_rejected() {
+        assert!(!csrf_matches(Some("tok"), None));
+    }
+
+    #[test]
+    fn empty_tokens_are_rejected() {
+        assert!(!csrf_matches(Some(""), Some("")));
+    }
+
+    #[test]
+    fn mismatch_is_rejected() {
+        assert!(!csrf_matches(Some("a"), Some("b")));
+    }
+
+    #[test]
+    fn matching_tokens_pass() {
+        assert!(csrf_matches(Some("tok"), Some("tok")));
+    }
 }

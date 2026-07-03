@@ -30,3 +30,25 @@ pub fn init() {
     tracing();
     header();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::sqids;
+
+    #[test]
+    fn sqids_roundtrips_ids() {
+        let s = sqids().unwrap();
+        for id in [1u64, 2, 42, 1000, u64::from(u32::MAX)] {
+            let slug = s.encode(&[id]).unwrap();
+            assert!(!slug.is_empty());
+            assert_eq!(s.decode(&slug).first().copied(), Some(id));
+        }
+    }
+
+    #[test]
+    fn sqids_rejects_garbage_slug() {
+        let s = sqids().unwrap();
+        // a slug that decodes to nothing must not yield an id
+        assert!(s.decode("!!!!").is_empty());
+    }
+}

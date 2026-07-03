@@ -282,3 +282,38 @@ async fn pings_index(
 
     Ok(Json(pings))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{clean_message, clean_target};
+
+    #[test]
+    fn clean_target_blank_becomes_none() {
+        assert_eq!(clean_target(None).unwrap(), None);
+        assert_eq!(clean_target(Some("".into())).unwrap(), None);
+        assert_eq!(clean_target(Some("   ".into())).unwrap(), None);
+    }
+
+    #[test]
+    fn clean_target_trims_and_keeps_valid_url() {
+        assert_eq!(
+            clean_target(Some("  https://example.com/x  ".into())).unwrap(),
+            Some("https://example.com/x".to_string())
+        );
+    }
+
+    #[test]
+    fn clean_target_rejects_non_url() {
+        assert!(clean_target(Some("not a url".into())).is_err());
+    }
+
+    #[test]
+    fn clean_message_trims_and_blanks_to_none() {
+        assert_eq!(clean_message(None), None);
+        assert_eq!(clean_message(Some("   ".into())), None);
+        assert_eq!(
+            clean_message(Some("  hi there  ".into())),
+            Some("hi there".to_string())
+        );
+    }
+}

@@ -155,3 +155,55 @@ async fn store(
 
     Ok(Json(uuid))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{NoteParams, PingParams};
+    use validator::Validate;
+
+    fn ping(lat: f64, lon: f64, note: &str) -> PingParams {
+        PingParams {
+            slug: "abc".into(),
+            lat,
+            lon,
+            note: note.into(),
+        }
+    }
+
+    #[test]
+    fn ping_accepts_in_range_coords() {
+        assert!(ping(14.6, 120.98, "").validate().is_ok());
+        assert!(ping(-90.0, 180.0, "meet at cafe").validate().is_ok());
+    }
+
+    #[test]
+    fn ping_rejects_out_of_range_coords() {
+        assert!(ping(90.1, 0.0, "").validate().is_err());
+        assert!(ping(0.0, 200.0, "").validate().is_err());
+    }
+
+    #[test]
+    fn ping_rejects_overlong_note() {
+        assert!(ping(0.0, 0.0, &"x".repeat(256)).validate().is_err());
+        assert!(ping(0.0, 0.0, &"x".repeat(255)).validate().is_ok());
+    }
+
+    #[test]
+    fn note_requires_nonempty_bounded_text() {
+        assert!(NoteParams { note: "".into() }.validate().is_err());
+        assert!(
+            NoteParams {
+                note: "x".repeat(256)
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            NoteParams {
+                note: "call me".into()
+            }
+            .validate()
+            .is_ok()
+        );
+    }
+}
