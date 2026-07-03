@@ -9,7 +9,7 @@ use validator::Validate;
 
 use crate::{
     AppState, Error, Response, Result,
-    auth::{ResetClaim, hash_password},
+    auth::{ResetClaim, hash_password, password_fingerprint},
     entity::{prelude::Users, users},
     mail::user::send_reset,
 };
@@ -53,13 +53,20 @@ async fn set(State(state): State<AppState>, Json(params): Json<ResetParams>) -> 
     }
     .claims;
 
-    let mut user = Users::find_by_id(claims.user_id)
+    let user = Users::find_by_id(claims.user_id)
         .filter(users::Column::Email.eq(claims.email))
         .one(&state.db)
         .await?
-        .ok_or(Error::InvalidCredentials)?
-        .into_active_model();
+        .ok_or(Error::InvalidCredentials)?;
 
+    // Single-use: the token was minted against a specific password hash. Once
+    // the password changes (including a prior use of this same link) the
+    // fingerprint no longer matches and the link is dead.
+    if claims.pw != password_fingerprint(&user.password) {
+        return Err(Error::InvalidCredentials);
+    }
+
+    let mut user = user.into_active_model();
     user.password = Set(hash_password(&params.password)?);
     user.save(&state.db).await?;
 
@@ -91,6 +98,7 @@ async fn forgot(
     let auth = ResetClaim {
         user_id: user.id,
         email: user.email.clone(),
+        pw: password_fingerprint(&user.password),
         exp,
     };
 

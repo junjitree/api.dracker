@@ -7,7 +7,7 @@ use validator::Validate;
 
 use crate::{
     AppState, Error, Response, Result,
-    auth::{ResetClaim, hash_password},
+    auth::{ResetClaim, hash_password, password_fingerprint},
     entity::{prelude::Users, users},
     mail::user::send_welcome,
 };
@@ -56,6 +56,7 @@ async fn store(State(state): State<AppState>, Json(params): Json<Params>) -> Res
     let auth = ResetClaim {
         user_id: user.id,
         email: user.email.clone(),
+        pw: password_fingerprint(&user.password),
         exp,
     };
 

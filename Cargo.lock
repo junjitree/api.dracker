@@ -1100,6 +1100,7 @@ dependencies = [
  "sea-orm",
  "serde",
  "serde_json",
+ "sha2",
  "sqids",
  "tokio",
  "tower-http",

@@ -30,6 +30,7 @@ sea-orm = { version = "1.1", features = [
   "sqlx-mysql",
 ] }
 serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
 serde_json = "1.0"
 sqids = "0.4.2"
 tokio = { version = "1.47", features = ["full"] }
