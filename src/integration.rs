@@ -262,6 +262,48 @@ async fn ping_uuid_note_flow() {
 }
 
 #[tokio::test]
+async fn trackers_list_and_detail() {
+    let Some(app) = app().await else { return };
+    let ip = "10.10.0.5";
+    let (cookie, csrf) = login(&app, ip, "trackers_list@test.local").await;
+
+    let (s, _, v) = send(
+        &app,
+        Req::new("POST", "/v1/trackers", ip)
+            .cookie(cookie.clone())
+            .csrf(csrf)
+            .json(json!({"name": "Camera bag", "desc": "black"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let id = v.as_u64().expect("tracker id");
+
+    // The list query left-joins pings and orders by MAX(pings.created_at) with
+    // a GROUP BY — the app's most DB-specific query. Exercise it end to end.
+    let (s, _, v) = send(
+        &app,
+        Req::new("GET", "/v1/trackers", ip).cookie(cookie.clone()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let list = v.as_array().expect("tracker array");
+    let mine = list
+        .iter()
+        .find(|t| t["id"].as_u64() == Some(id))
+        .expect("created tracker present in list");
+    assert_eq!(mine["name"], "Camera bag");
+    assert!(mine["slug"].as_str().is_some_and(|s| !s.is_empty()));
+
+    let (s, _, v) = send(
+        &app,
+        Req::new("GET", &format!("/v1/trackers/{id}"), ip).cookie(cookie),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["id"].as_u64(), Some(id));
+}
+
+#[tokio::test]
 async fn ping_rejects_bad_input() {
     let Some(app) = app().await else { return };
     let ip = "10.10.0.4";

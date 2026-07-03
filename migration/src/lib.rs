@@ -6,6 +6,7 @@ mod m20260218_095049_create_trackers_table;
 mod m20260219_000000_create_pings_table;
 mod m20260630_000000_add_lost_fields;
 mod m20260703_000000_add_ping_uuid;
+mod m20260704_000000_add_tracker_target_url;
 
 pub struct Migrator;
 
@@ -19,6 +20,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260219_000000_create_pings_table::Migration),
             Box::new(m20260630_000000_add_lost_fields::Migration),
             Box::new(m20260703_000000_add_ping_uuid::Migration),
+            Box::new(m20260704_000000_add_tracker_target_url::Migration),
         ]
     }
 }
