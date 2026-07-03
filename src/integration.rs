@@ -304,6 +304,50 @@ async fn trackers_list_and_detail() {
 }
 
 #[tokio::test]
+async fn scan_recorded_and_listed() {
+    let Some(app) = app().await else { return };
+    let ip = "10.10.0.6";
+    let (cookie, csrf) = login(&app, ip, "scan_flow@test.local").await;
+
+    // create a tracker, derive its public slug
+    let (s, _, v) = send(
+        &app,
+        Req::new("POST", "/v1/trackers", ip)
+            .cookie(cookie.clone())
+            .csrf(csrf)
+            .json(json!({"name": "Wallet", "desc": ""})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let id = v.as_u64().expect("tracker id");
+    let slug = crate::util::sqids().unwrap().encode(&[id]).unwrap();
+
+    // hitting the public QR redirect records a scan
+    let (s, _, _) = send(&app, Req::new("GET", &format!("/r/{slug}"), ip)).await;
+    assert_eq!(s, StatusCode::TEMPORARY_REDIRECT);
+
+    // The insert is spawned off the request path (best-effort, errors
+    // swallowed), so poll for it to land. This is the only coverage of the
+    // scans table — which historically existed in prod but not in migrations —
+    // so a missing/mismatched table surfaces here as a 500 or an empty list.
+    let mut scans = Vec::new();
+    for _ in 0..20 {
+        let (s, _, v) = send(
+            &app,
+            Req::new("GET", &format!("/v1/trackers/{id}/scans"), ip).cookie(cookie.clone()),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        scans = v.as_array().cloned().unwrap_or_default();
+        if !scans.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(scans.len(), 1, "scan row recorded");
+}
+
+#[tokio::test]
 async fn ping_rejects_bad_input() {
     let Some(app) = app().await else { return };
     let ip = "10.10.0.4";
