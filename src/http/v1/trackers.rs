@@ -50,8 +50,8 @@ struct ScanDto {
 struct PingDto {
     id: u64,
     note: String,
-    lat: f64,
-    lon: f64,
+    lat: Option<f64>,
+    lon: Option<f64>,
     created_at: DateTime<Utc>,
 }
 

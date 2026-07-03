@@ -8,10 +8,10 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: u64,
     pub tracker_id: u64,
-    #[sea_orm(column_type = "Double")]
-    pub lat: f64,
-    #[sea_orm(column_type = "Double")]
-    pub lon: f64,
+    #[sea_orm(column_type = "Double", nullable)]
+    pub lat: Option<f64>,
+    #[sea_orm(column_type = "Double", nullable)]
+    pub lon: Option<f64>,
     pub note: String,
     #[sea_orm(column_type = "Binary(16)", nullable)]
     pub uuid: Option<Vec<u8>>,

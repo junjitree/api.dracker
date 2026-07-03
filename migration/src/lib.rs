@@ -8,6 +8,7 @@ mod m20260630_000000_add_lost_fields;
 mod m20260703_000000_add_ping_uuid;
 mod m20260704_000000_add_tracker_target_url;
 mod m20260704_000001_create_scans_table;
+mod m20260704_000002_pings_optional_coords;
 
 pub struct Migrator;
 
@@ -23,6 +24,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260703_000000_add_ping_uuid::Migration),
             Box::new(m20260704_000000_add_tracker_target_url::Migration),
             Box::new(m20260704_000001_create_scans_table::Migration),
+            Box::new(m20260704_000002_pings_optional_coords::Migration),
         ]
     }
 }

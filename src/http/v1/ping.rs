@@ -24,10 +24,13 @@ use crate::{
 #[derive(Debug, Deserialize, Validate)]
 struct PingParams {
     slug: String,
+    // Optional as a pair: a finder may leave only a note instead of a location.
     #[validate(range(min = -90.0, max = 90.0))]
-    lat: f64,
+    #[serde(default)]
+    lat: Option<f64>,
     #[validate(range(min = -180.0, max = 180.0))]
-    lon: f64,
+    #[serde(default)]
+    lon: Option<f64>,
     #[validate(length(max = 255))]
     note: String,
 }
@@ -118,14 +121,25 @@ async fn show(State(state): State<AppState>, Path(slug): Path<String>) -> Result
     }))
 }
 
-/// Record a finder's location ping. Returns the ping's uuid — the only handle
-/// that can attach a follow-up note (see `set_note`).
+/// Record a finder's ping — a location, a note, or both. Returns the ping's
+/// uuid — the only handle that can attach a follow-up note (see `set_note`).
 async fn store(
     State(state): State<AppState>,
     Json(params): Json<PingParams>,
 ) -> Result<Json<Uuid>> {
     if let Err(err) = params.validate() {
         return Err(Error::BadRequest(err.to_string()));
+    }
+
+    // Coordinates come as a pair, and an empty ping (no location, no note)
+    // carries nothing for the owner.
+    let coords = match (params.lat, params.lon) {
+        (Some(lat), Some(lon)) => Some((lat, lon)),
+        (None, None) => None,
+        _ => return Err(Error::BadRequest("lat and lon go together".into())),
+    };
+    if coords.is_none() && params.note.trim().is_empty() {
+        return Err(Error::BadRequest("Share a location or leave a note".into()));
     }
 
     let sqids = util::sqids()?;
@@ -145,7 +159,7 @@ async fn store(
         tracker_id: Set(tracker_id),
         lat: Set(params.lat),
         lon: Set(params.lon),
-        note: Set(params.note),
+        note: Set(params.note.trim().to_string()),
         uuid: Set(Some(uuid.as_bytes().to_vec())),
 
         ..Default::default()
@@ -164,8 +178,8 @@ mod tests {
     fn ping(lat: f64, lon: f64, note: &str) -> PingParams {
         PingParams {
             slug: "abc".into(),
-            lat,
-            lon,
+            lat: Some(lat),
+            lon: Some(lon),
             note: note.into(),
         }
     }

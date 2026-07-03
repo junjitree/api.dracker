@@ -262,6 +262,63 @@ async fn ping_uuid_note_flow() {
 }
 
 #[tokio::test]
+async fn ping_note_only_flow() {
+    let Some(app) = app().await else { return };
+    let ip = "10.10.0.7";
+    let (cookie, csrf) = login(&app, ip, "note_only@test.local").await;
+
+    let (s, _, v) = send(
+        &app,
+        Req::new("POST", "/v1/trackers", ip)
+            .cookie(cookie.clone())
+            .csrf(csrf)
+            .json(json!({"name": "Umbrella", "desc": ""})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let id = v.as_u64().expect("tracker id");
+    let slug = crate::util::sqids().unwrap().encode(&[id]).unwrap();
+
+    // a note without a location is accepted
+    let (s, _, _) = send(
+        &app,
+        Req::new("POST", "/v1/ping", ip)
+            .json(json!({"slug": slug, "note": "left it with the barista"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // ...but an empty ping (no coords, no note) is not
+    let (s, _, _) = send(
+        &app,
+        Req::new("POST", "/v1/ping", ip).json(json!({"slug": slug, "note": "  "})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // ...nor is half a coordinate pair
+    let (s, _, _) = send(
+        &app,
+        Req::new("POST", "/v1/ping", ip).json(json!({"slug": slug, "lat": 1.0, "note": "x"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // the owner sees the note-only ping with null coordinates
+    let (s, _, v) = send(
+        &app,
+        Req::new("GET", &format!("/v1/trackers/{id}/pings"), ip).cookie(cookie),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let pings = v.as_array().expect("pings array");
+    assert_eq!(pings.len(), 1);
+    assert_eq!(pings[0]["note"], "left it with the barista");
+    assert!(pings[0]["lat"].is_null());
+    assert!(pings[0]["lon"].is_null());
+}
+
+#[tokio::test]
 async fn trackers_list_and_detail() {
     let Some(app) = app().await else { return };
     let ip = "10.10.0.5";
