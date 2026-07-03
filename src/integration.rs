@@ -1,0 +1,287 @@
+//! HTTP + DB integration tests. They exercise the real router (built by
+//! `crate::build_app`) against a real MySQL/MariaDB via `oneshot`.
+//!
+//! They only run when `TEST_DATABASE_URL` is set (CI provides a throwaway
+//! MySQL service); without it every test returns early, so a plain local
+//! `cargo test` with no database still passes. Each test uses a unique email
+//! and a unique `X-Forwarded-For` so they stay independent under parallelism
+//! and don't trip the per-IP rate limiter.
+
+use axum::{
+    Router,
+    body::Body,
+    http::{HeaderMap, Request, StatusCode, header},
+};
+use jsonwebtoken::{DecodingKey, EncodingKey};
+use lettre::{SmtpTransport, message::Mailbox};
+use migration::{Migrator, MigratorTrait};
+use sea_orm::Database;
+use serde_json::{Value, json};
+use tower::ServiceExt; // for `oneshot`
+
+use crate::state::{AppState, Mail};
+
+// Throwaway Ed25519 keypair — test-only, never used outside these tests.
+const TEST_PRV_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIJMH2MByKu60/R8kjaeHkJqq95Q1IA3YGRc8AVwnBlhl\n-----END PRIVATE KEY-----\n";
+const TEST_PUB_PEM: &str = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAelvyxr9U3h2LT+Fkr7PoiYj0JolHqskqNovn4XZg9ps=\n-----END PUBLIC KEY-----\n";
+
+/// Build the app against the test DB, or `None` when `TEST_DATABASE_URL` is
+/// unset (so the suite skips cleanly on a DB-less machine).
+async fn app() -> Option<Router> {
+    let url = std::env::var("TEST_DATABASE_URL").ok()?;
+    let db = Database::connect(&url).await.expect("connect test db");
+    Migrator::up(&db, None).await.expect("run migrations");
+
+    let state = AppState {
+        db,
+        mail: Mail {
+            transport: SmtpTransport::unencrypted_localhost(),
+            from: Mailbox::new(Some("Test".into()), "test@localhost".parse().unwrap()),
+        },
+        prv_key: EncodingKey::from_ed_pem(TEST_PRV_PEM.as_bytes()).unwrap(),
+        pub_key: DecodingKey::from_ed_pem(TEST_PUB_PEM.as_bytes()).unwrap(),
+        spa_url: "http://localhost".into(),
+    };
+    Some(crate::build_app(state))
+}
+
+/// A request builder that stamps the caller's fake client IP (for the rate
+/// limiter's key extractor) and an optional Cookie header.
+struct Req {
+    method: &'static str,
+    uri: String,
+    ip: String,
+    cookie: Option<String>,
+    csrf: Option<String>,
+    body: Value,
+}
+
+impl Req {
+    fn new(method: &'static str, uri: &str, ip: &str) -> Self {
+        Self {
+            method,
+            uri: uri.into(),
+            ip: ip.into(),
+            cookie: None,
+            csrf: None,
+            body: Value::Null,
+        }
+    }
+    fn cookie(mut self, c: String) -> Self {
+        self.cookie = Some(c);
+        self
+    }
+    fn csrf(mut self, c: String) -> Self {
+        self.csrf = Some(c);
+        self
+    }
+    fn json(mut self, body: Value) -> Self {
+        self.body = body;
+        self
+    }
+
+    fn build(self) -> Request<Body> {
+        let mut b = Request::builder()
+            .method(self.method)
+            .uri(self.uri)
+            .header("x-forwarded-for", self.ip)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(c) = self.cookie {
+            b = b.header(header::COOKIE, c);
+        }
+        if let Some(c) = self.csrf {
+            b = b.header("x-csrf-token", c);
+        }
+        let body = if self.body.is_null() {
+            Body::empty()
+        } else {
+            Body::from(self.body.to_string())
+        };
+        b.body(body).unwrap()
+    }
+}
+
+/// Send a request against a fresh clone of the app; return status + headers +
+/// parsed JSON body (Null if the body isn't JSON).
+async fn send(app: &Router, req: Req) -> (StatusCode, HeaderMap, Value) {
+    let res = app.clone().oneshot(req.build()).await.unwrap();
+    let status = res.status();
+    let headers = res.headers().clone();
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    (status, headers, value)
+}
+
+/// Pull a `name=value` out of a response's Set-Cookie headers.
+fn set_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers.get_all(header::SET_COOKIE).iter().find_map(|hv| {
+        let s = hv.to_str().ok()?;
+        let first = s.split(';').next()?;
+        let (k, v) = first.split_once('=')?;
+        (k.trim() == name).then(|| v.trim().to_string())
+    })
+}
+
+/// Sign up + log in a fresh user, returning (auth cookie value, csrf token).
+async fn login(app: &Router, ip: &str, email: &str) -> (String, String) {
+    let body =
+        json!({"email": email, "password": "password123", "given_name": "T", "surname": "U"});
+    let (s, _, _) = send(app, Req::new("POST", "/v1/signup", ip).json(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "signup");
+
+    let creds = json!({"email": email, "password": "password123"});
+    let (s, h, _) = send(app, Req::new("POST", "/v1/login/cookie", ip).json(creds)).await;
+    assert_eq!(s, StatusCode::CREATED, "login");
+    let auth = set_cookie(&h, "authorization").expect("auth cookie");
+
+    let (s, h, _) = send(app, Req::new("GET", "/v1/csrf", ip)).await;
+    assert_eq!(s, StatusCode::CREATED, "csrf");
+    let csrf = h.get("x-csrf-token").unwrap().to_str().unwrap().to_string();
+
+    (format!("authorization={auth}; x-csrf-token={csrf}"), csrf)
+}
+
+#[tokio::test]
+async fn signup_login_and_wrong_password() {
+    let Some(app) = app().await else { return };
+    let ip = "10.10.0.1";
+    let email = "signup_login@test.local";
+
+    let body =
+        json!({"email": email, "password": "password123", "given_name": "T", "surname": "U"});
+    let (s, _, _) = send(&app, Req::new("POST", "/v1/signup", ip).json(body)).await;
+    assert_eq!(s, StatusCode::CREATED);
+
+    let (s, h, _) = send(
+        &app,
+        Req::new("POST", "/v1/login/cookie", ip)
+            .json(json!({"email": email, "password": "password123"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    assert!(set_cookie(&h, "authorization").is_some());
+
+    let (s, _, _) = send(
+        &app,
+        Req::new("POST", "/v1/login/cookie", ip).json(json!({"email": email, "password": "nope"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn csrf_is_enforced_on_mutations() {
+    let Some(app) = app().await else { return };
+    let ip = "10.10.0.2";
+    let (cookie, csrf) = login(&app, ip, "csrf_enforced@test.local").await;
+
+    let payload = json!({"email": "csrf_enforced@test.local", "given_name": "T", "surname": "U"});
+
+    // authenticated but no CSRF header -> rejected
+    let (s, _, _) = send(
+        &app,
+        Req::new("PUT", "/v1/users/me", ip)
+            .cookie(cookie.clone())
+            .json(payload.clone()),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
+    // with the matching CSRF header -> accepted
+    let (s, _, _) = send(
+        &app,
+        Req::new("PUT", "/v1/users/me", ip)
+            .cookie(cookie)
+            .csrf(csrf)
+            .json(payload),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+}
+
+#[tokio::test]
+async fn ping_uuid_note_flow() {
+    let Some(app) = app().await else { return };
+    let ip = "10.10.0.3";
+    let (cookie, csrf) = login(&app, ip, "ping_flow@test.local").await;
+
+    // create a tracker, derive its public slug
+    let (s, _, v) = send(
+        &app,
+        Req::new("POST", "/v1/trackers", ip)
+            .cookie(cookie)
+            .csrf(csrf)
+            .json(json!({"name": "Keys", "desc": ""})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let id = v.as_u64().expect("tracker id");
+    let slug = crate::util::sqids().unwrap().encode(&[id]).unwrap();
+
+    // a finder pings the location -> gets back a uuid
+    let (s, _, v) = send(
+        &app,
+        Req::new("POST", "/v1/ping", ip)
+            .json(json!({"slug": slug, "lat": 14.6, "lon": 121.0, "note": ""})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let uuid = v.as_str().expect("ping uuid").to_string();
+
+    // that uuid can attach a note
+    let (s, _, _) = send(
+        &app,
+        Req::new("PUT", &format!("/v1/ping/{uuid}/note"), ip)
+            .json(json!({"note": "found it, call me"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // the old sequential-id path no longer resolves (uuid parse fails)
+    let (s, _, _) = send(
+        &app,
+        Req::new("PUT", "/v1/ping/1/note", ip).json(json!({"note": "spam"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // a random uuid matches nothing
+    let (s, _, _) = send(
+        &app,
+        Req::new(
+            "PUT",
+            "/v1/ping/00000000-0000-4000-8000-000000000000/note",
+            ip,
+        )
+        .json(json!({"note": "x"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn ping_rejects_bad_input() {
+    let Some(app) = app().await else { return };
+    let ip = "10.10.0.4";
+
+    // out-of-range latitude -> 400
+    let (s, _, _) = send(
+        &app,
+        Req::new("POST", "/v1/ping", ip)
+            .json(json!({"slug": "abc", "lat": 999.0, "lon": 0.0, "note": ""})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // decodable but nonexistent slug -> 404 (not a 500 from the FK)
+    let ghost = crate::util::sqids().unwrap().encode(&[9_999_999]).unwrap();
+    let (s, _, _) = send(
+        &app,
+        Req::new("POST", "/v1/ping", ip)
+            .json(json!({"slug": ghost, "lat": 1.0, "lon": 1.0, "note": ""})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}

@@ -67,7 +67,6 @@ async fn main() -> Result<()> {
         .expect("Could not run database migrations");
 
     let spa_url = env::var("SPA_URL").expect("SPA_URL must be set");
-    let origin = spa_url.clone();
 
     let mail_host = env::var("MAIL_HOST").expect("MAIL_HOST must be set");
     let mail_user = env::var("MAIL_USER").expect("MAIL_USER must be set");
@@ -102,7 +101,25 @@ async fn main() -> Result<()> {
     // Background maintenance: prune old scans + expired session rows daily.
     cron::start(state.clone());
 
-    let mut origins = vec![origin.parse().unwrap()];
+    let app = build_app(state);
+
+    let addr = SocketAddr::from(([0, 0, 0, 0], app_port));
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    info!("Listening on http://{}", listener.local_addr().unwrap());
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
+
+    Ok(())
+}
+
+/// Assemble the full application router (routes + CORS + compression) from a
+/// built `AppState`. Split out from `main` so integration tests can build the
+/// exact same app and drive it with `tower::ServiceExt::oneshot`.
+fn build_app(state: AppState) -> Router {
+    let mut origins = vec![state.spa_url.parse().unwrap()];
     if cfg!(debug_assertions) {
         // INFO: This is for local development
         origins.push("http://localhost:42069".parse().unwrap());
@@ -121,21 +138,13 @@ async fn main() -> Result<()> {
         .max_age(Duration::from_secs(3600))
         .allow_credentials(true);
 
-    let app = Router::new()
+    Router::new()
         .merge(http::root::routes())
         .merge(http::v1::routes(&state))
         .with_state(state)
         .layer(cors)
-        .layer(CompressionLayer::new());
-
-    let addr = SocketAddr::from(([0, 0, 0, 0], app_port));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    info!("Listening on http://{}", listener.local_addr().unwrap());
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
-
-    Ok(())
+        .layer(CompressionLayer::new())
 }
+
+#[cfg(test)]
+mod integration;

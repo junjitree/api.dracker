@@ -26,6 +26,44 @@ jobs:
       - name: test
         run: cargo test
 
+  # Integration tests against a real MySQL. Kept separate and intentionally NOT
+  # a dependency of `deploy`: they need a DB service and can't be validated
+  # locally, so a red here surfaces a problem without blocking the release.
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: dracker_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Apply the schema once up front so concurrent tests don't race on table
+      # creation; each test's own Migrator::up then no-ops.
+      - name: migrate
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/dracker_test
+        run: cargo run --package migration -- up
+
+      - name: integration tests
+        env:
+          TEST_DATABASE_URL: mysql://root:root@127.0.0.1:3306/dracker_test
+        run: cargo test
+
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
