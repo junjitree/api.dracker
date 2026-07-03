@@ -20,6 +20,7 @@ use tower_http::cors::CorsLayer;
 use tracing::info;
 
 mod auth;
+mod cron;
 mod crypto;
 mod entity;
 mod error;
@@ -97,6 +98,9 @@ async fn main() -> Result<()> {
         pub_key,
         spa_url,
     };
+
+    // Background maintenance: prune old scans + expired session rows daily.
+    cron::start(state.clone());
 
     let mut origins = vec![origin.parse().unwrap()];
     if cfg!(debug_assertions) {
