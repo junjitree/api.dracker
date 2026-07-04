@@ -34,6 +34,8 @@ struct Dto {
     target_url: Option<String>,
     is_lost: bool,
     message: Option<String>,
+    /// Most recent ping, if any — the "last activity" shown on tag cards.
+    last_ping_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -125,10 +127,12 @@ async fn index(
 
     // Order by most-recently-pinged: left-join pings and sort by each tracker's
     // latest ping time. Never-pinged tags have a NULL max and sort last (MySQL
-    // puts NULLs last on DESC); updated_at breaks ties within that group.
+    // puts NULLs last on DESC); updated_at breaks ties within that group. The
+    // same aggregate is exposed as last_ping_at for the cards' activity label.
     let mut trackers = query(&params, auth.user_id)
         .join(JoinType::LeftJoin, trackers::Relation::Pings.def())
         .group_by(trackers::Column::Id)
+        .column_as(Expr::cust("MAX(pings.created_at)"), "last_ping_at")
         .order_by(Expr::cust("MAX(pings.created_at)"), Order::Desc)
         .order_by(trackers::Column::UpdatedAt, Order::Desc)
         .offset(skip)
@@ -186,6 +190,9 @@ async fn show(
     Path(id): Path<u64>,
 ) -> Result<Json<Dto>> {
     let mut tracker = query_one(id, auth.user_id)
+        .join(JoinType::LeftJoin, trackers::Relation::Pings.def())
+        .group_by(trackers::Column::Id)
+        .column_as(Expr::cust("MAX(pings.created_at)"), "last_ping_at")
         .into_model::<Dto>()
         .one(&state.db)
         .await?

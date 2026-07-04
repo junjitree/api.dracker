@@ -232,7 +232,7 @@ async fn ping_location_with_note() {
     // the owner sees the ping with both coordinates and the note
     let (s, _, v) = send(
         &app,
-        Req::new("GET", &format!("/v1/trackers/{id}/pings"), ip).cookie(cookie),
+        Req::new("GET", &format!("/v1/trackers/{id}/pings"), ip).cookie(cookie.clone()),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -240,6 +240,15 @@ async fn ping_location_with_note() {
     assert_eq!(pings.len(), 1);
     assert_eq!(pings[0]["note"], "found it, call me");
     assert_eq!(pings[0]["lat"].as_f64(), Some(14.6));
+
+    // ...and the tracker detail exposes the ping as its last activity
+    let (s, _, v) = send(
+        &app,
+        Req::new("GET", &format!("/v1/trackers/{id}"), ip).cookie(cookie),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(v["last_ping_at"].is_string(), "last_ping_at should be set");
 }
 
 #[tokio::test]
@@ -331,6 +340,7 @@ async fn trackers_list_and_detail() {
         .expect("created tracker present in list");
     assert_eq!(mine["name"], "Camera bag");
     assert!(mine["slug"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(mine["last_ping_at"].is_null(), "never pinged => null");
 
     let (s, _, v) = send(
         &app,
