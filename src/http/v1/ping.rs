@@ -137,7 +137,11 @@ async fn store(
         let tag = tracker.name.clone();
         let tid = tracker.id;
         tokio::task::spawn_blocking(move || {
-            let _ = send_ping_notification(&mail, &owner, &tag, tid, coords, &note, &spa_url);
+            if let Err(err) =
+                send_ping_notification(&mail, &owner, &tag, tid, coords, &note, &spa_url)
+            {
+                tracing::error!("ping notification email failed: {err}");
+            }
         });
     }
 

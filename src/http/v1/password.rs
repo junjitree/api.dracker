@@ -120,7 +120,9 @@ async fn forgot(
     }
     // SmtpTransport::send is blocking — keep it off the async workers
     tokio::task::spawn_blocking(move || {
-        let _ = send_reset(&state.mail, &user, link.as_str());
+        if let Err(err) = send_reset(&state.mail, &user, link.as_str()) {
+            tracing::error!("send_reset email failed: {err}");
+        }
     });
 
     Ok(Response::Accepted)

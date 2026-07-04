@@ -79,7 +79,9 @@ async fn store(State(state): State<AppState>, Json(params): Json<Params>) -> Res
     }
     // SmtpTransport::send is blocking — keep it off the async workers
     tokio::task::spawn_blocking(move || {
-        let _ = send_welcome(&state.mail, &user, link.as_str());
+        if let Err(err) = send_welcome(&state.mail, &user, link.as_str()) {
+            tracing::error!("send_welcome email failed: {err}");
+        }
     });
 
     Ok(Response::Created(user_id))
