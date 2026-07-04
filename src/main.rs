@@ -73,18 +73,27 @@ async fn main() -> Result<()> {
     let mail_pass = env::var("MAIL_PASS").expect("MAIL_PASS must be set");
     let mail_name = env::var("MAIL_NAME").expect("MAIL_NAME must be set");
     let mail_addr = env::var("MAIL_ADDR").expect("MAIL_ADDR must be set");
-    let mail_port = env::var("MAIL_PORT").unwrap_or("2525".to_string());
+    let mail_port: u16 = env::var("MAIL_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(587);
 
     let creds = Credentials::new(mail_user.clone(), mail_pass);
 
-    let transport = SmtpTransport::relay(&mail_host)
-        .unwrap()
-        .port(mail_port.parse().unwrap())
-        .tls(Tls::Required(
-            TlsParameters::new(mail_host).expect("Could not configure TLS"),
-        ))
-        .credentials(creds)
-        .build();
+    let tls = TlsParameters::new(mail_host.clone()).expect("Could not configure TLS");
+    // 465/2465 speak implicit TLS (SMTPS, TLS from the first byte); 587/2587/25
+    // speak STARTTLS (plaintext greeting, then upgrade). Picking the wrong one
+    // makes the SMTP conversation hang until it times out.
+    let transport_builder = if matches!(mail_port, 465 | 2465) {
+        SmtpTransport::relay(&mail_host)
+            .unwrap()
+            .tls(Tls::Wrapper(tls))
+    } else {
+        SmtpTransport::starttls_relay(&mail_host)
+            .unwrap()
+            .tls(Tls::Required(tls))
+    };
+    let transport = transport_builder.port(mail_port).credentials(creds).build();
 
     let from = Mailbox::new(Some(mail_name), mail_addr.parse().unwrap());
 
