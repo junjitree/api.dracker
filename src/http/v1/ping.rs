@@ -1,12 +1,9 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
-    routing::{get, post, put},
+    routing::{get, post},
 };
-use chrono::Utc;
-use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter,
-};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use validator::Validate;
@@ -15,8 +12,9 @@ use crate::{
     Error, Result,
     entity::{
         pings,
-        prelude::{Pings, Trackers, Users},
+        prelude::{Trackers, Users},
     },
+    mail::user::send_ping_notification,
     state::AppState,
     util,
 };
@@ -35,12 +33,6 @@ struct PingParams {
     note: String,
 }
 
-#[derive(Debug, Deserialize, Validate)]
-struct NoteParams {
-    #[validate(length(min = 1, max = 255))]
-    note: String,
-}
-
 /// Public, finder-facing view of a tag. Contact details and the owner's
 /// message are only included while the tag is marked lost.
 #[derive(Serialize)]
@@ -56,36 +48,6 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/ping", post(store))
         .route("/ping/{slug}", get(show))
-        .route("/ping/{uuid}/note", put(set_note))
-}
-
-/// Attach a finder's note (their phone / a meetup spot) to a just-created ping.
-/// Public, so it's addressed by the ping's random uuid — handed out only in the
-/// response to the ping that created it — rather than the guessable sequential
-/// id. It also only sets the note while it's still empty, avoiding overwrites.
-async fn set_note(
-    State(state): State<AppState>,
-    Path(uuid): Path<Uuid>,
-    Json(params): Json<NoteParams>,
-) -> Result<Json<Uuid>> {
-    if let Err(err) = params.validate() {
-        return Err(Error::BadRequest(err.to_string()));
-    }
-
-    let ping = Pings::find()
-        .filter(pings::Column::Uuid.eq(uuid))
-        .one(&state.db)
-        .await?
-        .ok_or(Error::NotFound)?;
-
-    if ping.note.trim().is_empty() {
-        let mut ping = ping.into_active_model();
-        ping.note = Set(params.note.trim().to_string());
-        ping.updated_at = Set(Utc::now());
-        ping.save(&state.db).await?;
-    }
-
-    Ok(Json(uuid))
 }
 
 async fn show(State(state): State<AppState>, Path(slug): Path<String>) -> Result<Json<PublicDto>> {
@@ -121,8 +83,7 @@ async fn show(State(state): State<AppState>, Path(slug): Path<String>) -> Result
     }))
 }
 
-/// Record a finder's ping — a location, a note, or both. Returns the ping's
-/// uuid — the only handle that can attach a follow-up note (see `set_note`).
+/// Record a finder's ping — a location, a note, or both — and email the owner.
 async fn store(
     State(state): State<AppState>,
     Json(params): Json<PingParams>,
@@ -149,7 +110,7 @@ async fn store(
         .ok_or(Error::BadRequest("Invalid slug".into()))?;
 
     // 404 unknown/revoked slugs instead of tripping the FK into a 500
-    Trackers::find_by_id(tracker_id)
+    let tracker = Trackers::find_by_id(tracker_id)
         .one(&state.db)
         .await?
         .ok_or(Error::NotFound)?;
@@ -167,12 +128,25 @@ async fn store(
     .insert(&state.db)
     .await?;
 
+    // Best-effort: let the owner know their tag was pinged. Off the request
+    // path (blocking SMTP), never fails the ping.
+    if let Some(owner) = Users::find_by_id(tracker.user_id).one(&state.db).await? {
+        let mail = state.mail.clone();
+        let spa_url = state.spa_url.clone();
+        let note = params.note.trim().to_string();
+        let tag = tracker.name.clone();
+        let tid = tracker.id;
+        tokio::task::spawn_blocking(move || {
+            let _ = send_ping_notification(&mail, &owner, &tag, tid, coords, &note, &spa_url);
+        });
+    }
+
     Ok(Json(uuid))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{NoteParams, PingParams};
+    use super::PingParams;
     use validator::Validate;
 
     fn ping(lat: f64, lon: f64, note: &str) -> PingParams {
@@ -200,24 +174,5 @@ mod tests {
     fn ping_rejects_overlong_note() {
         assert!(ping(0.0, 0.0, &"x".repeat(256)).validate().is_err());
         assert!(ping(0.0, 0.0, &"x".repeat(255)).validate().is_ok());
-    }
-
-    #[test]
-    fn note_requires_nonempty_bounded_text() {
-        assert!(NoteParams { note: "".into() }.validate().is_err());
-        assert!(
-            NoteParams {
-                note: "x".repeat(256)
-            }
-            .validate()
-            .is_err()
-        );
-        assert!(
-            NoteParams {
-                note: "call me".into()
-            }
-            .validate()
-            .is_ok()
-        );
     }
 }

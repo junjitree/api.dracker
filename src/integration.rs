@@ -202,7 +202,7 @@ async fn csrf_is_enforced_on_mutations() {
 }
 
 #[tokio::test]
-async fn ping_uuid_note_flow() {
+async fn ping_location_with_note() {
     let Some(app) = app().await else { return };
     let ip = "10.10.0.3";
     let (cookie, csrf) = login(&app, ip, "ping_flow@test.local").await;
@@ -211,7 +211,7 @@ async fn ping_uuid_note_flow() {
     let (s, _, v) = send(
         &app,
         Req::new("POST", "/v1/trackers", ip)
-            .cookie(cookie)
+            .cookie(cookie.clone())
             .csrf(csrf)
             .json(json!({"name": "Keys", "desc": ""})),
     )
@@ -220,45 +220,26 @@ async fn ping_uuid_note_flow() {
     let id = v.as_u64().expect("tracker id");
     let slug = crate::util::sqids().unwrap().encode(&[id]).unwrap();
 
-    // a finder pings the location -> gets back a uuid
-    let (s, _, v) = send(
+    // a finder pings a location AND a note together, in one request
+    let (s, _, _) = send(
         &app,
         Req::new("POST", "/v1/ping", ip)
-            .json(json!({"slug": slug, "lat": 14.6, "lon": 121.0, "note": ""})),
-    )
-    .await;
-    assert_eq!(s, StatusCode::OK);
-    let uuid = v.as_str().expect("ping uuid").to_string();
-
-    // that uuid can attach a note
-    let (s, _, _) = send(
-        &app,
-        Req::new("PUT", &format!("/v1/ping/{uuid}/note"), ip)
-            .json(json!({"note": "found it, call me"})),
+            .json(json!({"slug": slug, "lat": 14.6, "lon": 121.0, "note": "found it, call me"})),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
 
-    // the old sequential-id path no longer resolves (uuid parse fails)
-    let (s, _, _) = send(
+    // the owner sees the ping with both coordinates and the note
+    let (s, _, v) = send(
         &app,
-        Req::new("PUT", "/v1/ping/1/note", ip).json(json!({"note": "spam"})),
+        Req::new("GET", &format!("/v1/trackers/{id}/pings"), ip).cookie(cookie),
     )
     .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST);
-
-    // a random uuid matches nothing
-    let (s, _, _) = send(
-        &app,
-        Req::new(
-            "PUT",
-            "/v1/ping/00000000-0000-4000-8000-000000000000/note",
-            ip,
-        )
-        .json(json!({"note": "x"})),
-    )
-    .await;
-    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert_eq!(s, StatusCode::OK);
+    let pings = v.as_array().expect("pings array");
+    assert_eq!(pings.len(), 1);
+    assert_eq!(pings[0]["note"], "found it, call me");
+    assert_eq!(pings[0]["lat"].as_f64(), Some(14.6));
 }
 
 #[tokio::test]
