@@ -12,6 +12,7 @@ use crate::{AppState, Error, Result, entity::prelude::Trackers, entity::scans, u
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(index))
+        .route("/robots.txt", get(robots))
         .route("/r/{slug}", get(resolve))
 }
 
@@ -23,6 +24,12 @@ const LANDING: &str = include_str!("../../static/index.html");
 
 async fn index(State(state): State<AppState>) -> Html<String> {
     Html(LANDING.replace("{{spa_url}}", &state.spa_url))
+}
+
+/// robots.txt for the apex domain (nginx exact-matches it past the slug
+/// resolver, so it can never collide with a tag slug).
+async fn robots() -> &'static str {
+    include_str!("../../static/robots.txt")
 }
 
 /// Resolve a tracker slug to its destination.
