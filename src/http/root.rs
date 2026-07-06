@@ -1,8 +1,8 @@
 use axum::{
     Router,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode, header::USER_AGENT},
-    response::Redirect,
+    http::{HeaderMap, header::USER_AGENT},
+    response::{Html, Redirect},
     routing::get,
 };
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, EntityTrait};
@@ -15,8 +15,14 @@ pub fn routes() -> Router<AppState> {
         .route("/r/{slug}", get(resolve))
 }
 
-async fn index() -> StatusCode {
-    StatusCode::IM_A_TEAPOT
+/// The marketing landing page, served on the apex domain (dracker.sh).
+///
+/// Embedded in the binary so the deploy stays a single artifact; app links are
+/// templated so dev environments point at their local SPA.
+const LANDING: &str = include_str!("../../static/index.html");
+
+async fn index(State(state): State<AppState>) -> Html<String> {
+    Html(LANDING.replace("{{spa_url}}", &state.spa_url))
 }
 
 /// Resolve a tracker slug to its destination.
