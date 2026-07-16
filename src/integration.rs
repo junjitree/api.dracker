@@ -41,6 +41,8 @@ async fn app() -> Option<Router> {
         prv_key: EncodingKey::from_ed_pem(TEST_PRV_PEM.as_bytes()).unwrap(),
         pub_key: DecodingKey::from_ed_pem(TEST_PUB_PEM.as_bytes()).unwrap(),
         spa_url: "http://localhost".into(),
+        api_url: String::new(),
+        apex_url: String::new(),
     };
     Some(crate::build_app(state))
 }
@@ -418,4 +420,26 @@ async fn ping_rejects_bad_input() {
     )
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn landing_page_templates_all_placeholders() {
+    let Some(app) = app().await else { return };
+
+    let res = app
+        .clone()
+        .oneshot(Req::new("GET", "/", "10.10.0.5").build())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let html = String::from_utf8(bytes.to_vec()).unwrap();
+
+    // every {{spa_url}}/{{api_url}} placeholder must be substituted
+    assert!(!html.contains("{{"), "unsubstituted placeholder in landing");
+    // the signed-in check needs its swap targets and the session probe
+    assert!(html.contains("data-login"));
+    assert!(html.contains("/v1/users/me"));
 }

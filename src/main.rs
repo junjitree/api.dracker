@@ -67,6 +67,8 @@ async fn main() -> Result<()> {
         .expect("Could not run database migrations");
 
     let spa_url = env::var("SPA_URL").expect("SPA_URL must be set");
+    let api_url = env::var("API_URL").unwrap_or_default();
+    let apex_url = env::var("APEX_URL").unwrap_or_default();
 
     let mail_host = env::var("MAIL_HOST").expect("MAIL_HOST must be set");
     let mail_user = env::var("MAIL_USER").expect("MAIL_USER must be set");
@@ -105,6 +107,8 @@ async fn main() -> Result<()> {
         prv_key,
         pub_key,
         spa_url,
+        api_url,
+        apex_url,
     };
 
     // Background maintenance: prune old scans + expired session rows daily.
@@ -129,6 +133,9 @@ async fn main() -> Result<()> {
 /// exact same app and drive it with `tower::ServiceExt::oneshot`.
 fn build_app(state: AppState) -> Router {
     let mut origins = vec![state.spa_url.parse().unwrap()];
+    if !state.apex_url.is_empty() {
+        origins.push(state.apex_url.parse().unwrap());
+    }
     if cfg!(debug_assertions) {
         // INFO: This is for local development
         origins.push("http://localhost:42069".parse().unwrap());

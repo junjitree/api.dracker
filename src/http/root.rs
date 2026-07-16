@@ -23,7 +23,11 @@ pub fn routes() -> Router<AppState> {
 const LANDING: &str = include_str!("../../static/index.html");
 
 async fn index(State(state): State<AppState>) -> Html<String> {
-    Html(LANDING.replace("{{spa_url}}", &state.spa_url))
+    Html(
+        LANDING
+            .replace("{{spa_url}}", &state.spa_url)
+            .replace("{{api_url}}", &state.api_url),
+    )
 }
 
 /// robots.txt for the apex domain (nginx exact-matches it past the slug

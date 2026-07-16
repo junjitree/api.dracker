@@ -541,7 +541,7 @@
       <nav class="dr-home__navlinks" aria-label="Primary">
         <a href="#how">How it works</a>
         <a href="#features">Features</a>
-        <a href="{{spa_url}}/login" class="dr-home__login">Log in</a>
+        <a href="{{spa_url}}/login" class="dr-home__login" data-login>Log in</a>
         <a href="{{spa_url}}/signup" class="dr-btn dr-btn--primary">Get started</a>
       </nav>
     </header>
@@ -562,7 +562,7 @@
             <a href="{{spa_url}}/signup" class="dr-btn dr-btn--primary dr-btn--lg">
               Create your first tag — free
             </a>
-            <a href="{{spa_url}}/login" class="dr-btn dr-btn--ghost dr-btn--lg">Log in</a>
+            <a href="{{spa_url}}/login" class="dr-btn dr-btn--ghost dr-btn--lg" data-login>Log in</a>
           </div>
           <p class="dr-home__note">Free to start · Keys, bags, bikes, pets, laptops &amp; more</p>
         </div>
@@ -703,7 +703,7 @@
       </a>
       <p class="dr-home__footer-tag">Lost &amp; found for anything — one scan away.</p>
       <nav class="dr-home__footer-links" aria-label="Footer">
-        <a href="{{spa_url}}/login">Log in</a>
+        <a href="{{spa_url}}/login" data-login>Log in</a>
         <a href="{{spa_url}}/signup">Sign up</a>
       </nav>
       <small>© <span id="dr-year">2026</span> Dracker</small>
@@ -711,6 +711,19 @@
 
     <script>
       document.getElementById('dr-year').textContent = new Date().getFullYear();
+
+      // The page is static, so it can't know about a session at render time.
+      // Probe the API (where the session cookie lives; same-origin in dev)
+      // and swap the login links for a dashboard link when one is active.
+      fetch('{{api_url}}/v1/users/me', { credentials: 'include' })
+        .then((res) => {
+          if (!res.ok) return;
+          document.querySelectorAll('a[data-login]').forEach((a) => {
+            a.href = '{{spa_url}}/trackers';
+            a.textContent = 'Dashboard';
+          });
+        })
+        .catch(() => {});
     </script>
   </body>
 </html>
