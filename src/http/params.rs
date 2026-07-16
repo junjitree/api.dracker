@@ -6,7 +6,7 @@ where
 {
     let s: Option<String> = Option::deserialize(deserializer)?;
     let trimmed = s.map(|s| s.trim().to_string());
-    Ok(trimmed.and_then(|t| if t.is_empty() { None } else { Some(t) }))
+    Ok(trimmed.filter(|t| !t.is_empty()))
 }
 
 #[derive(Deserialize)]
